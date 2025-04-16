@@ -6,48 +6,15 @@
 #include "directory.h"
 #include <stdlib.h>
 
-// Actually read data
-int
-mread(const char *path, char *buf, unsigned long size)
-{
-    int rv = 6;
-    //strcpy(buf, "hello\n");
-    int l = tree_lookup(path);
-    inode* n = get_inode(l);
-    void *data = (void*)(uintptr_t)n->ptrs[0];
-    memcpy(buf, get_data_start(), size);
-    printf("read(%s, %ld bytes)\n", path, size);
-    return rv;
-}
-
-// Actually write data
-int
-mwrite(const char *path, const char *buf, size_t size)
-{
-    int rv = -1;
-    int l = tree_lookup(path);
-    if (l==-1) {
-    	int l = alloc_inode();
-    }
-    inode* n = get_inode(l);
-    //void *b = (void*)(uintptr_t)n->ptrs[0];
-    memcpy(get_data_start(), buf, size);
-    n->size += size;
-    printf("write(%s, %ld bytes)\n", path, size);
-    return rv;
-}
-
 int
 main(int argc, char *argv[])
 {
 	// TODO : mkfs implementation...
 	pages_init("data.nufs");
 	size_t *p = (size_t*)get_root_start();
-	*p = 2;
+	*p = 1;
 	dirent *root = (dirent*)get_root_start() + 1;
-	dirent *dhello = root + 1;
 	strcpy(root->name, "/");
-	strcpy(dhello->name, "/hello.txt");
 	void *blk = get_root_start();	// Root directory starts at the beginning of data segment...
 	int t = alloc_inode();
 	inode* ptr = get_inode(t);
@@ -56,16 +23,6 @@ main(int argc, char *argv[])
 	root->inum = t;
 	root->type = DIRECTORY;
 	root->active = true;
-	t = alloc_inode();
-	inode *hello = get_inode(t);
-	//printf("%d\n", t);
-	hello->mode=0100644;
-	hello->ptrs[0] = 0;
-	dhello->inum = t;
-	dhello->type = FILE;
-	dhello->active = true;
-	dhello->next=NULL;
-	root->next=dhello;
-	mwrite("/hello.txt", "hello\n", 6);
+	root->next=NULL;
 	pages_free();
 }

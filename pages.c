@@ -16,6 +16,7 @@
 #include "pages.h"
 #include "util.h"
 #include "bitmap.h"
+#include "nufs.h"
 
 const int PAGE_COUNT = 512;
 const int NUFS_SIZE  = 4096 * 512; // 2MB
@@ -43,7 +44,10 @@ void
 storage_init(const char* path)
 {
     pages_fd = open(path, O_RDWR, 0644);
-    assert(pages_fd != -1);
+    if (pages_fd == -1) {
+    	mkfs();
+    	storage_init(path);
+    }
 
     pages_base = mmap(0, NUFS_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, pages_fd, 0);
     assert(pages_base != MAP_FAILED);

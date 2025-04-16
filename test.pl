@@ -55,6 +55,7 @@ write_text("one.txt", $msg0);
 ok(-e "mnt/one.txt", "File1 exists.");
 ok(-f "mnt/one.txt", "File1 is regular file.");
 my $msg1 = read_text("one.txt");
+say read_text("one.txt");
 say "# '$msg0' eq '$msg1'?";
 ok($msg0 eq $msg1, "Read back data1 correctly.");
 

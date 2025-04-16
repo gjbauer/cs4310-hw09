@@ -25,27 +25,63 @@ nufs_access(const char *path, int mask)
 {
     int rv = 0;
     int l = tree_lookup(path);
-    rv = (l>-1) ? 0 : -1;
+    rv = (l>-1) ? F_OK : ENOENT;
     printf("access(%s, %04o) -> %d\n", path, mask, rv);
     return rv;
+}
+
+// mknod makes a filesystem object like a file or directory
+// called for: man 2 open, man 2 link
+int
+nufs_mknod(const char *path, mode_t mode, dev_t rdev)
+{
+    int rv = 0;
+    int l = alloc_inode();
+    inode *n = get_inode(l);
+    size_t* count = (size_t*)get_root_start();
+    dirent *nod = (dirent*)get_root_start() + 1;
+    for (int i=0; i<*count; i++, *nod++);
+    strcpy(nod->name, path);
+    nod->inum = l;
+    *count = *count + 1;
+    n->mode = mode;
+    printf("mknod(%s, %04o) -> %d\n", path, mode, rv);
+    return rv;
+}
+
+int
+nufs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
+	if (nufs_mknod(path, mode, 0)) {
+    		int l = tree_lookup(path);
+    		inode *n = get_inode(l);
+        	n->mode = mode; // regular file
+        	n->size = 0;
+        	return l;
+	} else return -1;
 }
 
 // implementation for: man 2 stat
 // gets an object's attributes (type, permissions, size, etc)
 int
 nufs_getattr(const char *path, struct stat *st)
+// What I hate about this is how it will now create a file for each one that is tests exists...not very great of average UX
 {
     int rv = 0;
     int l = tree_lookup(path);
+    inode *n;
     if (l>-1) {
-    	inode *n = get_inode(l);
+    	n = get_inode(l);
         st->st_mode = n->mode; // regular file
         st->st_size = n->size;
         st->st_uid = getuid();
     }
     else {
-    	rv = -ENOENT;
+    	l = nufs_create(path, 0100644, 0);
+    	return nufs_getattr(path, st);
     }
+    /*else {
+    	rv = -ENOENT;
+    }*/
     printf("getattr(%s) -> (%d) {mode: %04o, size: %ld}\n", path, rv, st->st_mode, st->st_size);
     return rv;
 }
@@ -77,36 +113,6 @@ nufs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
     printf("readdir(%s) -> %d\n", path, rv);
     return 0;
-}
-
-// mknod makes a filesystem object like a file or directory
-// called for: man 2 open, man 2 link
-int
-nufs_mknod(const char *path, mode_t mode, dev_t rdev)
-{
-    int rv = 0;
-    int l = alloc_inode();
-    inode *n = get_inode(l);
-    size_t* count = (size_t*)get_root_start();
-    dirent *nod = (dirent*)get_root_start() + 1;
-    for (int i=0; i<*count; i++, *nod++);
-    strcpy(nod->name, path);
-    nod->inum = l;
-    *count = *count + 1;
-    n->mode = mode;
-    printf("mknod(%s, %04o) -> %d\n", path, mode, rv);
-    return rv;
-}
-
-int
-nufs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
-	if (nufs_mknod(path, 0100644, 0)) {
-    		int l = tree_lookup(path);
-    		inode *n = get_inode(l);
-        	n->mode = mode; // regular file
-        	n->size = 0;
-        	return 0;
-	} else return -1;
 }
 
 // most of the following callbacks implement
@@ -178,7 +184,7 @@ nufs_open(const char *path, struct fuse_file_info *fi)
 {
     int rv = 0;
     int k = nufs_access(path, 0);
-    if (k==-1) k = nufs_mknod(path, 0100644, 0);
+    if (k==ENOENT) k = nufs_create(path, 0100644, 0);
     printf("open(%s) -> %d\n", path, rv);
     return rv;
 }
@@ -187,12 +193,11 @@ nufs_open(const char *path, struct fuse_file_info *fi)
 int
 nufs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
-    int rv = 6;
-    //strcpy(buf, "hello\n");
+    int rv = 4096;
     int l = tree_lookup(path);
     inode* n = get_inode(l);
-    void *data = (void*)(uintptr_t)n->ptrs[0];
-    memcpy(buf, get_data_start(), size);
+    void *data = (void*)(uintptr_t)((char*)get_data_start()+n->ptrs[0]);
+    memcpy(buf, data, size);
     printf("read(%s, %ld bytes, @+%ld) -> %d\n", path, size, offset, rv);
     return rv;
 }
@@ -203,12 +208,13 @@ nufs_write(const char *path, const char *buf, size_t size, off_t offset, struct 
 {
     int rv = 0;
     int l = tree_lookup(path);
-    if (l==-1) {
-    	int l = alloc_inode();
-    }
     inode* n = get_inode(l);
-    //void *b = (void*)(uintptr_t)n->ptrs[0];	// (int)(uintptr_t)get_data_start()
-    memcpy(get_data_start(), buf, size);
+    inode* h = get_inode(0);
+    void *b = (void*)(uintptr_t)((char*)get_data_start() + h->ptrs[0]);
+    memcpy(b, buf, size);
+    n->ptrs[0]=h->ptrs[0];
+    n->size=size;
+    h->ptrs[0]+=size;
     rv = size;
     printf("write(%s, %ld bytes, @+%ld) -> %d\n", path, size, offset, rv);
     return rv;
@@ -282,7 +288,7 @@ int
 main(int argc, char *argv[])
 {
     assert(argc > 2 && argc < 6);
-    if (access(argv[argc], F_OK) != 0) mkfs();
+    //if (access(argv[argc], F_OK) != 0) mkfs();
     storage_init(argv[--argc]);
     nufs_init_ops(&nufs_ops);
     return fuse_main(argc, argv, &nufs_ops, NULL);
