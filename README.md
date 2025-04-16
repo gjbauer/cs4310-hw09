@@ -1,1 +1,1 @@
-![](graph.png)
+![](screen.png)
