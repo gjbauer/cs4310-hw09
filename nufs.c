@@ -191,7 +191,7 @@ nufs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_fi
     //strcpy(buf, "hello\n");
     int l = tree_lookup(path);
     inode* n = get_inode(l);
-    //void *data = (void*)(uintptr_t)n->ptrs[0];
+    void *data = (void*)(uintptr_t)n->ptrs[0];
     memcpy(buf, get_data_start(), size);
     printf("read(%s, %ld bytes, @+%ld) -> %d\n", path, size, offset, rv);
     return rv;
@@ -205,9 +205,10 @@ nufs_write(const char *path, const char *buf, size_t size, off_t offset, struct 
     int l = tree_lookup(path);
     if (l==-1) {
     	int l = alloc_inode();
-    	inode* n = get_inode(l);
-    	memcpy(get_data_start(), buf, size);
     }
+    inode* n = get_inode(l);
+    //void *b = (void*)(uintptr_t)n->ptrs[0];
+    memcpy(get_data_start(), buf, size);
     printf("write(%s, %ld bytes, @+%ld) -> %d\n", path, size, offset, rv);
     return rv;
 }
@@ -256,12 +257,45 @@ nufs_init_ops(struct fuse_operations* ops)
 
 struct fuse_operations nufs_ops;
 
+// Actually read data
+int
+mread(const char *path, char *buf, unsigned long size)
+{
+    int rv = 6;
+    //strcpy(buf, "hello\n");
+    int l = tree_lookup(path);
+    inode* n = get_inode(l);
+    void *data = (void*)(uintptr_t)n->ptrs[0];
+    memcpy(buf, get_data_start(), size);
+    printf("read(%s, %ld bytes)\n", path, size);
+    return rv;
+}
+
+// Actually write data
+int
+mwrite(const char *path, const char *buf, size_t size)
+{
+    int rv = -1;
+    int l = tree_lookup(path);
+    if (l==-1) {
+    	int l = alloc_inode();
+    }
+    inode* n = get_inode(l);
+    //void *b = (void*)(uintptr_t)n->ptrs[0];
+    memcpy(get_data_start(), buf, size);
+    printf("write(%s, %ld bytes)\n", path, size);
+    return rv;
+}
+
 int
 main(int argc, char *argv[])
 {
     assert(argc > 2 && argc < 6);
     //printf("TODO: mount %s as data file\n", argv[--argc]);
+    char buff[256];
     storage_init(argv[--argc]);
+    mread(argv[argc], buff, 6);
+    printf("%s\n", buff);
     nufs_init_ops(&nufs_ops);
     return fuse_main(argc, argv, &nufs_ops, NULL);
 }

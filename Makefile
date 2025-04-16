@@ -10,7 +10,7 @@ nufs: $(OBJS)
 	gcc $(CLFAGS) -o $@ nufs.o pages.o bitmap.o inode.o directory.o $(LDLIBS)
 
 mkfs: $(OBJS)
-	gcc $(CLFAGS) -o mkfs mkfs.o pages.o bitmap.o inode.o $(LDLIBS)
+	gcc $(CLFAGS) -o mkfs mkfs.o pages.o bitmap.o inode.o directory.o $(LDLIBS)
 	
 read_root: $(OBJS)
 	gcc $(CLFAGS) -o read_root read_root.o pages.o directory.o bitmap.o inode.o $(LDLIBS)

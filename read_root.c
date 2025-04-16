@@ -48,7 +48,7 @@ main(int argc, char *argv[])
 		*root++, i++;
 	}
 	char buff[256];
-	write("/hello.txt", "hello\n", 6);
+	//write("/hello.txt", "hello\n", 6);
 	read("/hello.txt", buff, 6);
 	printf("%s\n", buff);
 	pages_free();
