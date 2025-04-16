@@ -10,6 +10,7 @@
 #include <bsd/string.h>
 #include <assert.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 #define FUSE_USE_VERSION 26
 #include <fuse.h>
@@ -65,29 +66,31 @@ nufs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     struct stat st;
     int rv;
 
-    rv = nufs_getattr("/", &st);
+    /*rv = nufs_getattr("/", &st);
     assert(rv == 0);
 
     filler(buf, ".", &st, 0);
 
     rv = nufs_getattr("/hello.txt", &st);
     assert(rv == 0);
-    filler(buf, "hello.txt", &st, 0);
+    filler(buf, "hello.txt", &st, 0);*/
     
-    	/*size_t* count = (size_t*)get_root_start();
+    	size_t* count = (size_t*)get_root_start();
     	//printf("count -> %d\n", *count);
 	dirent *ent = (dirent*)get_root_start()+1;
 	for (int i=0; i<*count; i++) {
 		//printf("i -> %d\n", i);
-		char name[DIR_NAME];
-		for(int i=1; i<DIR_NAME && ent->name[i]; i++) name[i-1] = ent->name[i];
-		//printf("ent->name -> %s\n", ent->name);
+		char *name[DIR_NAME];
+		int i;
+		for(i=1; i<DIR_NAME && ent->name[i]; i++) name[i-1] = ent->name[i];
+		name[i-1]=0;
+		printf("name -> %s\n", name);
 		rv = nufs_getattr(ent->name, &st);
     		assert(rv == 0);
-    		if (!strcmp(path, "/")) filler(buf, ".", &st, 0);
-    		else filler(buf, name, &st, 0);
+    		if (strcmp(path, "/")) filler(buf, ".", &st, 0);
+    		else filler(buf, "hello.txt", &st, 0);
 		*ent++;
-	}*/
+	}
 
     printf("readdir(%s) -> %d\n", path, rv);
     return 0;
