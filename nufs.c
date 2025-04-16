@@ -23,9 +23,10 @@
 int
 nufs_access(const char *path, int mask)
 {
-    int rv;
-    rv = tree_lookup(path);
+    int rv = 0;
+    int l = tree_lookup(path);
     printf("access(%s, %04o) -> %d\n", path, mask, rv);
+    //return (l>-1) ? 0 : -1;
     return rv;
 }
 
@@ -35,20 +36,21 @@ int
 nufs_getattr(const char *path, struct stat *st)
 {
     int rv = 0;
+    int l;
     if (strcmp(path, "/") == 0) {
         st->st_mode = 040755; // directory
         st->st_size = 0;
         st->st_uid = getuid();
     }
-    else {
-    	int l = tree_lookup(path);
-    	printf("l -> %d\n", l);
+    else if ((l = tree_lookup(path)) > -1) {
     	if (l>-1) {
-    	inode *n = get_inode(l);
-        st->st_mode = 0100644; // regular file
-        st->st_size = 6;
-        st->st_uid = getuid();
-        } else rv = -1;
+    		inode *n = get_inode(l);
+        	st->st_mode = n->mode; // regular file
+        	st->st_size = n->size;
+        	st->st_uid = getuid();
+        }
+    } else {
+    	rv = -1;
     }
     printf("getattr(%s) -> (%d) {mode: %04o, size: %ld}\n", path, rv, st->st_mode, st->st_size);
     return rv;
@@ -63,16 +65,16 @@ nufs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     struct stat st;
     int rv;
 
-    /*rv = nufs_getattr("/", &st);
+    rv = nufs_getattr("/", &st);
     assert(rv == 0);
 
     filler(buf, ".", &st, 0);
 
     rv = nufs_getattr("/hello.txt", &st);
     assert(rv == 0);
-    filler(buf, "hello.txt", &st, 0);*/
+    filler(buf, "hello.txt", &st, 0);
     
-    	size_t* count = (size_t*)get_root_start();
+    	/*size_t* count = (size_t*)get_root_start();
     	//printf("count -> %d\n", *count);
 	dirent *ent = (dirent*)get_root_start()+1;
 	for (int i=0; i<*count; i++) {
@@ -85,7 +87,7 @@ nufs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     		if (!strcmp(path, "/")) filler(buf, ".", &st, 0);
     		else filler(buf, name, &st, 0);
 		*ent++;
-	}
+	}*/
 
     printf("readdir(%s) -> %d\n", path, rv);
     return 0;
@@ -165,7 +167,8 @@ nufs_chmod(const char *path, mode_t mode)
 int
 nufs_truncate(const char *path, off_t size)
 {
-    int rv = -1;
+    int rv = 0;
+    //int l = tree_lookup(path
     printf("truncate(%s, %ld bytes) -> %d\n", path, size, rv);
     return rv;
 }
@@ -201,7 +204,7 @@ nufs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_fi
 int
 nufs_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
-    int rv = -1;
+    int rv = 0;
     int l = tree_lookup(path);
     if (l==-1) {
     	int l = alloc_inode();
@@ -209,6 +212,7 @@ nufs_write(const char *path, const char *buf, size_t size, off_t offset, struct 
     inode* n = get_inode(l);
     //void *b = (void*)(uintptr_t)n->ptrs[0];
     memcpy(get_data_start(), buf, size);
+    rv = size;
     printf("write(%s, %ld bytes, @+%ld) -> %d\n", path, size, offset, rv);
     return rv;
 }

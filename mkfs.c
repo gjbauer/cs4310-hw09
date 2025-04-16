@@ -32,6 +32,7 @@ mwrite(const char *path, const char *buf, size_t size)
     inode* n = get_inode(l);
     //void *b = (void*)(uintptr_t)n->ptrs[0];
     memcpy(get_data_start(), buf, size);
+    n->size += size;
     printf("write(%s, %ld bytes)\n", path, size);
     return rv;
 }
@@ -50,7 +51,7 @@ main(int argc, char *argv[])
 	void *blk = get_root_start();	// Root directory starts at the beginning of data segment...
 	int t = alloc_inode();
 	inode* ptr = get_inode(t);
-	ptr->mode=644;
+	ptr->mode=040755;
 	ptr->ptrs[0] = (int)(uintptr_t)get_data_start();
 	root->inum = t;
 	root->type = DIRECTORY;
@@ -58,7 +59,7 @@ main(int argc, char *argv[])
 	t = alloc_inode();
 	inode *hello = get_inode(t);
 	//printf("%d\n", t);
-	hello->mode=644;
+	hello->mode=0100644;
 	hello->ptrs[0] = (int)(uintptr_t)get_data_start();
 	dhello->inum = t;
 	dhello->type = DIRECTORY;
