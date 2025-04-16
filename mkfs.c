@@ -62,7 +62,7 @@ main(int argc, char *argv[])
 	hello->mode=0100644;
 	hello->ptrs[0] = (int)(uintptr_t)get_data_start();
 	dhello->inum = t;
-	dhello->type = DIRECTORY;
+	dhello->type = FILE;
 	dhello->active = true;
 	dhello->next=NULL;
 	root->next=dhello;
