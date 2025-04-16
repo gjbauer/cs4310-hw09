@@ -26,8 +26,8 @@ nufs_access(const char *path, int mask)
 {
     int rv = 0;
     int l = tree_lookup(path);
+    rv = (l>-1) ? 0 : -1;
     printf("access(%s, %04o) -> %d\n", path, mask, rv);
-    //return (l>-1) ? 0 : -1;
     return rv;
 }
 
@@ -37,21 +37,15 @@ int
 nufs_getattr(const char *path, struct stat *st)
 {
     int rv = 0;
-    int l;
-    if (strcmp(path, "/") == 0) {
-        st->st_mode = 040755; // directory
-        st->st_size = 0;
+    int l = tree_lookup(path);
+    if (l>-1) {
+    	inode *n = get_inode(l);
+        st->st_mode = n->mode; // regular file
+        st->st_size = n->size;
         st->st_uid = getuid();
     }
-    else if ((l = tree_lookup(path)) > -1) {
-    	if (l>-1) {
-    		inode *n = get_inode(l);
-        	st->st_mode = n->mode; // regular file
-        	st->st_size = n->size;
-        	st->st_uid = getuid();
-        }
-    } else {
-    	rv = -1;
+    else {
+    	rv = -ENOENT;
     }
     printf("getattr(%s) -> (%d) {mode: %04o, size: %ld}\n", path, rv, st->st_mode, st->st_size);
     return rv;
@@ -103,6 +97,17 @@ nufs_mknod(const char *path, mode_t mode, dev_t rdev)
     n->mode = mode;
     printf("mknod(%s, %04o) -> %d\n", path, mode, rv);
     return rv;
+}
+
+int
+nufs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
+	if (nufs_mknod(path, 0100644, 0)) {
+    		int l = tree_lookup(path);
+    		inode *n = get_inode(l);
+        	n->mode = mode; // regular file
+        	n->size = 0;
+        	return 0;
+	} else return -1;
 }
 
 // most of the following callbacks implement
@@ -246,6 +251,7 @@ nufs_init_ops(struct fuse_operations* ops)
     ops->chmod    = nufs_chmod;
     ops->truncate = nufs_truncate;
     ops->open	  = nufs_open;
+    ops->create	  = nufs_create;
     ops->read     = nufs_read;
     ops->write    = nufs_write;
     ops->utimens  = nufs_utimens;
@@ -254,45 +260,31 @@ nufs_init_ops(struct fuse_operations* ops)
 
 struct fuse_operations nufs_ops;
 
-// Actually read data
-int
-mread(const char *path, char *buf, unsigned long size)
-{
-    int rv = 6;
-    //strcpy(buf, "hello\n");
-    int l = tree_lookup(path);
-    inode* n = get_inode(l);
-    void *data = (void*)(uintptr_t)n->ptrs[0];
-    memcpy(buf, get_data_start(), size);
-    printf("read(%s, %ld bytes)\n", path, size);
-    return rv;
-}
-
-// Actually write data
-int
-mwrite(const char *path, const char *buf, size_t size)
-{
-    int rv = -1;
-    int l = tree_lookup(path);
-    if (l==-1) {
-    	int l = alloc_inode();
-    }
-    inode* n = get_inode(l);
-    //void *b = (void*)(uintptr_t)n->ptrs[0];
-    memcpy(get_data_start(), buf, size);
-    printf("write(%s, %ld bytes)\n", path, size);
-    return rv;
+void
+mkfs() {
+	pages_init("data.nufs");
+	size_t *p = (size_t*)get_root_start();
+	*p = 1;
+	dirent *root = (dirent*)get_root_start() + 1;
+	strcpy(root->name, "/");
+	void *blk = get_root_start();	// Root directory starts at the beginning of data segment...
+	int t = alloc_inode();
+	inode* ptr = get_inode(t);
+	ptr->mode=040755;
+	ptr->ptrs[0] = (int)(uintptr_t)get_data_start();
+	root->inum = t;
+	root->type = DIRECTORY;
+	root->active = true;
+	root->next=NULL;
+	pages_free();
 }
 
 int
 main(int argc, char *argv[])
 {
     assert(argc > 2 && argc < 6);
-    //printf("TODO: mount %s as data file\n", argv[--argc]);
-    char buff[256];
+    if (access(argv[argc], F_OK) != 0) mkfs();
     storage_init(argv[--argc]);
-    nufs_read(argv[argc], buff, 6, 0, 0);
-    printf("%s\n", buff);
     nufs_init_ops(&nufs_ops);
     return fuse_main(argc, argv, &nufs_ops, NULL);
 }
