@@ -17,6 +17,7 @@
 #include "inode.h"
 #include "directory.h"
 #include "pages.h"
+#include "bitmap.h"
 
 // implementation for: man 2 access
 // Checks if a file exists.
@@ -129,6 +130,20 @@ int
 nufs_unlink(const char *path)
 {
     int rv = -1;
+    int l = tree_lookup(path);
+    if (l<0) return ENOENT;
+    size_t* count = (size_t*)get_root_start();
+    dirent *ent = (dirent*)get_root_start()+1;
+    void* bm = get_inode_bitmap();
+    for (int i=0; i<*count; i++) {
+    	rv = nufs_getattr(ent->name, 0);
+    	assert(rv == 0);
+    	if (strcmp(ent->name, path)==0) {
+    		ent->active=false;
+    		bitmap_put(bm, l, 0);
+    	}
+	*ent++;
+    }
     printf("unlink(%s) -> %d\n", path, rv);
     return rv;
 }
