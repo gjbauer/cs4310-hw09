@@ -6,7 +6,6 @@
 #include <sys/types.h>
 #include <errno.h>
 #include <sys/stat.h>
-//#include <dirent.h>
 #include <bsd/string.h>
 #include <assert.h>
 #include <stdint.h>
@@ -208,7 +207,7 @@ nufs_write(const char *path, const char *buf, size_t size, off_t offset, struct 
     	int l = alloc_inode();
     }
     inode* n = get_inode(l);
-    //void *b = (void*)(uintptr_t)n->ptrs[0];
+    //void *b = (void*)(uintptr_t)n->ptrs[0];	// (int)(uintptr_t)get_data_start()
     memcpy(get_data_start(), buf, size);
     rv = size;
     printf("write(%s, %ld bytes, @+%ld) -> %d\n", path, size, offset, rv);
@@ -271,7 +270,7 @@ mkfs() {
 	int t = alloc_inode();
 	inode* ptr = get_inode(t);
 	ptr->mode=040755;
-	ptr->ptrs[0] = (int)(uintptr_t)get_data_start();
+	ptr->ptrs[0] = 0;	// What if instead we tracked pointers relative to the start of data, so as to account for different memory mappings?
 	root->inum = t;
 	root->type = DIRECTORY;
 	root->active = true;

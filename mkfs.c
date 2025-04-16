@@ -52,7 +52,7 @@ main(int argc, char *argv[])
 	int t = alloc_inode();
 	inode* ptr = get_inode(t);
 	ptr->mode=040755;
-	ptr->ptrs[0] = (int)(uintptr_t)get_data_start();
+	ptr->ptrs[0] = 0;	// What if instead we tracked pointers relative to the start of data, so as to account for different memory mappings?
 	root->inum = t;
 	root->type = DIRECTORY;
 	root->active = true;
@@ -60,7 +60,7 @@ main(int argc, char *argv[])
 	inode *hello = get_inode(t);
 	//printf("%d\n", t);
 	hello->mode=0100644;
-	hello->ptrs[0] = (int)(uintptr_t)get_data_start();
+	hello->ptrs[0] = 0;
 	dhello->inum = t;
 	dhello->type = FILE;
 	dhello->active = true;
