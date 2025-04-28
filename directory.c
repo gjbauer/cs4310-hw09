@@ -9,7 +9,6 @@ int tree_lookup(const char* path) {
 	size_t* count = (size_t*)get_root_start();
 	dirent *ent = (dirent*)get_root_start()+1;
 	for (int i=0; i<*count; i++) {
-		//printf("%s\n", ent->name);
 		if (!strcmp(ent->name, path)) return ent->inum;
 		*ent++;
 	}
