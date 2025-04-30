@@ -1,7 +1,8 @@
 #include "pages.h"
 #include "bitmap.h"
 #include "inode.h"
-#include <stdint.h>
+#include "hash.h"
+//#include <stdint.h>
 //void print_inode(inode* node) {}
 inode* get_inode(int inum) {
 	// TODO: Return a specific inode given a number...
