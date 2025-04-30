@@ -26,7 +26,7 @@ write(const char *path, const char *buf, size_t size)
     int rv = -1;
     int l = tree_lookup(path);
     if (l==-1) {
-    	int l = alloc_inode();
+    	int l = alloc_inode(path);
     }
     inode* n = get_inode(l);
     //void *b = (void*)(uintptr_t)n->ptrs[0];

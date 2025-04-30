@@ -2,7 +2,7 @@
 #include <stdio.h>
 
 
-int hash(unsigned char *str)
+int hash(const unsigned char *str)
 {
     unsigned long hash = 137;
     int c;

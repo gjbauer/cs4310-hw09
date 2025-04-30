@@ -2,23 +2,29 @@
 #include "bitmap.h"
 #include "inode.h"
 #include "hash.h"
-//#include <stdint.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdint.h>
 //void print_inode(inode* node) {}
 inode* get_inode(int inum) {
 	// TODO: Return a specific inode given a number...
 	void *ptr = get_inode_start();
 	return (void*)((inode*)ptr + inum);
 }
-int alloc_inode() {
-	// TODO: Create an inode, mark it off on the bitmap, return its number...
+int
+alloc_inode(const char *path) {
+	char *hpath;
 	void* ibm = get_inode_bitmap();
-	for (int i=0; i<512; i++) {
-		if (!bitmap_get(ibm, i)) {
-			bitmap_put(ibm, i, 1);
-			return i;
-		}
+	if (bitmap_get(ibm, hash(path))) {
+		char c = (char)hash(path);
+		hpath = calloc((strlen(path)+1), sizeof(char));
+		strcpy(hpath, path);
+		strcat(hpath, &c);
+		return alloc_inode(hpath);
+	} else {
+		bitmap_put(ibm, hash(path), 1);
+		return hash(path);
 	}
-	return -1;
 }
 //void free_inode() {}
 //int grow_inode(inode* node, int size) {}

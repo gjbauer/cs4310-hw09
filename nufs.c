@@ -20,6 +20,8 @@
 #include "pages.h"
 #include "bitmap.h"
 #include "nufs.h"
+#include "hash.h"
+#include "mkfs.h"
 
 // implementation for: man 2 access
 // Checks if a file exists.
@@ -33,13 +35,30 @@ nufs_access(const char *path, int mask)
     return rv;
 }
 
+/*int
+get_node(const char *path) {
+	char *hpath
+	void* ibm = get_inode_bitmap();
+	if (bitmap_get(ibm, hash(path)) {
+		hpath = calloc((strlen(path)+2)*sizeof(char));
+		char *ptr = hpath;
+		strcpy(hpath, path);
+		for(int i=0; hpath[i]!=0; i++, *ptr++);
+		memcpy(ptr, hash(path), sizeof(int);
+		return get_node(path);
+	} else {
+		bitmap_put(ibm, hash(path), 1);
+		return hash(path);
+	}
+}*/
+
 // mknod makes a filesystem object like a file or directory
 // called for: man 2 open, man 2 link
 int
 nufs_mknod(const char *path, mode_t mode, dev_t rdev)
 {
     int rv = 0;
-    int l = alloc_inode();
+    int l = alloc_inode(path);
     inode *n = get_inode(l);
     size_t* count = (size_t*)get_root_start();
     dirent *nod = (dirent*)get_root_start() + 1;
@@ -315,25 +334,6 @@ nufs_init_ops(struct fuse_operations* ops)
 };
 
 struct fuse_operations nufs_ops;
-
-void
-mkfs() {
-	pages_init("data.nufs");
-	size_t *p = (size_t*)get_root_start();
-	*p = 1;
-	dirent *root = (dirent*)get_root_start() + 1;
-	strcpy(root->name, "/");
-	void *blk = get_root_start();	// Root directory starts at the beginning of data segment...
-	int t = alloc_inode();
-	inode* ptr = get_inode(t);
-	ptr->mode=040755;
-	ptr->ptrs[0] = 0;	// What if instead we tracked pointers relative to the start of data, so as to account for different memory mappings?
-	root->inum = t;
-	root->type = DIRECTORY;
-	root->active = true;
-	root->next=NULL;
-	pages_free();
-}
 
 int
 main(int argc, char *argv[])
