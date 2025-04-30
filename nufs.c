@@ -20,37 +20,18 @@
 #include "pages.h"
 #include "bitmap.h"
 #include "nufs.h"
-#include "hash.h"
-#include "mkfs.h"
 
 // implementation for: man 2 access
 // Checks if a file exists.
 int
 nufs_access(const char *path, int mask)
-{
+{	//if (!strcmp(path, "/")) return rv;
     int rv = 0;
     int l = tree_lookup(path);
-    rv = (l>-1) ? F_OK : ENOENT;
+    rv = (l>-1) ? F_OK : -ENOENT;
     printf("access(%s, %04o) -> %d\n", path, mask, rv);
     return rv;
 }
-
-/*int
-get_node(const char *path) {
-	char *hpath
-	void* ibm = get_inode_bitmap();
-	if (bitmap_get(ibm, hash(path)) {
-		hpath = calloc((strlen(path)+2)*sizeof(char));
-		char *ptr = hpath;
-		strcpy(hpath, path);
-		for(int i=0; hpath[i]!=0; i++, *ptr++);
-		memcpy(ptr, hash(path), sizeof(int);
-		return get_node(path);
-	} else {
-		bitmap_put(ibm, hash(path), 1);
-		return hash(path);
-	}
-}*/
 
 // mknod makes a filesystem object like a file or directory
 // called for: man 2 open, man 2 link
@@ -138,7 +119,7 @@ nufs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     	rv = nufs_getattr(ent->name, &st);
     	assert(rv == 0);
     	if (strcmp(ent->name, "/")==0) filler(buf, ".", &st, 0);
-    	else if (ent->active=true) {
+    	else if (ent->active==true) {
     		char name[DIR_NAME];
 		int i;
 		for(i=1; i<DIR_NAME && ent->name[i]; i++) name[i-1] = ent->name[i];
@@ -168,16 +149,18 @@ nufs_unlink(const char *path)
 {
     int rv = -1;
     int l = tree_lookup(path);
-    if (l<0) return ENOENT;
+    if (l<0) return -ENOENT;
     size_t* count = (size_t*)get_root_start();
     dirent *ent = (dirent*)get_root_start()+1;
     void* bm = get_inode_bitmap();
     for (int i=0; i<*count; i++) {
     	rv = nufs_getattr(ent->name, 0);
     	assert(rv == 0);
-    	if (strcmp(ent->name, path)==0) {
+    	if (!strcmp(ent->name, path)) {
     		ent->active=false;
     		bitmap_put(bm, l, 0);
+    		printf("found file!\n");
+    		return rv;
     	}
 	*ent++;
     }
@@ -254,7 +237,7 @@ nufs_open(const char *path, struct fuse_file_info *fi)
 {
     int rv = 0;
     int k = nufs_access(path, 0);
-    if (k==ENOENT) k = nufs_create(path, 0100644, 0);
+    if (k==-ENOENT) k = nufs_create(path, 0100644, 0);
     printf("open(%s) -> %d\n", path, rv);
     return rv;
 }
