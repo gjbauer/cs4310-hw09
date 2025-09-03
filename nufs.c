@@ -8,29 +8,126 @@
 #include <sys/stat.h>
 #include <bsd/string.h>
 #include <assert.h>
-#include <stdint.h>
 #include <stdlib.h>
-#include <stdbool.h>
 
 #define FUSE_USE_VERSION 26
 #include <fuse.h>
 
-#include "inode.h"
 #include "directory.h"
-#include "pages.h"
+#include "inode.h"
+#include "string.h"
 #include "bitmap.h"
-#include "nufs.h"
 
 // implementation for: man 2 access
 // Checks if a file exists.
 int
 nufs_access(const char *path, int mask)
-{	//if (!strcmp(path, "/")) return rv;
-    int rv = 0;
-    int l = tree_lookup(path);
-    rv = (l>-1) ? F_OK : -ENOENT;
-    printf("access(%s, %04o) -> %d\n", path, mask, rv);
-    return rv;
+{
+	int rv = 0;
+	int l = tree_lookup(path);
+	if ( l == -ENOENT ) rv = -1;
+	printf("access(%s, %04o) -> %d\n", path, mask, rv);
+	return rv;
+}
+
+// implementation for: man 2 stat
+// gets an object's attributes (type, permissions, size, etc)
+int
+nufs_getattr(const char *path, struct stat *st)
+/* This function was written by DeepSeek. */
+{
+	int rv = 0;
+	memset(st, 0, sizeof(struct stat));
+	
+	// Handle root directory
+	if (strcmp(path, "/") == 0) {
+		st->st_mode = S_IFDIR | 0755;
+		st->st_nlink = 2;
+		st->st_size = 0;
+		st->st_uid = getuid();
+		st->st_gid = getgid();
+		st->st_atime = st->st_mtime = st->st_ctime = time(NULL);
+		printf("getattr(%s) -> (%d) {mode: %04o, size: %ld}\n", path, rv, st->st_mode, st->st_size);
+		return 0;
+	}
+	
+	// Look up the inode for this path
+	int inum = tree_lookup(path);
+	if (inum < 0) {
+		rv = -ENOENT;
+	}
+	
+	// Get the inode
+	inode* node = get_inode(inum);
+	if (node == NULL) {
+		rv = -ENOENT;
+	}
+	
+	// Fill in the stat structure
+	st->st_mode = node->mode;
+	st->st_nlink = 1;
+	st->st_size = node->size;
+	st->st_uid = getuid();
+	st->st_gid = getgid();
+	st->st_atime = st->st_mtime = st->st_ctime = time(NULL);
+	st->st_ino = inum;
+	
+	printf("getattr(%s) -> (%d) {mode: %04o, size: %ld}\n", path, rv, st->st_mode, st->st_size);
+	return rv;
+}
+
+char *partial_path(char *path)
+{
+	char *partial = (char*)malloc(DIR_NAME * sizeof(char));
+	
+	int i,j;
+	for (i=0, j=0; i < DIR_NAME && j<count_l(path); i++)
+	{
+		if (path[i] == '/') j++;
+	}
+	for (int k=0; k<DIR_NAME && path[i]!='\0'; k++, i++) partial[k] = path[i];
+	
+	return partial;
+}
+
+// implementation for: man 2 readdir
+// lists the contents of a directory
+int
+nufs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
+			 off_t offset, struct fuse_file_info *fi)
+/* This function was originally written by DeepSeek.
+ * Finished by myself. */
+{
+	int rv = 0;
+	
+	// Get the directory listing
+	slist* entries = directory_list(path);
+	slist* current = entries;
+	
+	// Add "." and ".." entries first
+	struct stat st;
+	
+	// Add all directory entries
+	while (current != NULL) {
+		char *relative = partial_path(current->data);
+		
+		// Get file attributes
+		rv = nufs_getattr(current->data, &st);
+		if (rv == 0) {
+			if (!strcmp(current->data, "/")) filler(buf, ".", &st, 0);
+			else filler(buf, relative, &st, 0);
+		}
+		
+		free(relative);
+		
+		current = current->next;
+	}
+	
+	// Free the list
+	s_free(entries);
+	
+	printf("readdir(%s) -> %d\n", path, rv);
+	return rv;
 }
 
 // mknod makes a filesystem object like a file or directory
@@ -38,99 +135,34 @@ nufs_access(const char *path, int mask)
 int
 nufs_mknod(const char *path, mode_t mode, dev_t rdev)
 {
-    int rv = 0;
-    int l = alloc_inode(path);
-    inode *n = get_inode(l);
-    size_t* count = (size_t*)get_root_start();
-    dirent *nod = (dirent*)get_root_start() + 1;
-    for (int i=0; i<*count; i++, *nod++);
-    strcpy(nod->name, path);
-    nod->inum = l;
-    nod->active=true;
-    *count = *count + 1;
-    n->mode = mode;
-    printf("mknod(%s, %04o) -> %d\n", path, mode, rv);
-    return rv;
-}
+	int rv = 0;
+	char *ppath = split(path, count_l(path)-1);
+	int l = tree_lookup(ppath);
+	inode *dd = get_inode(l);
+	
+	int inum = alloc_inode(path);
+	inode fn;
+	memcpy((char*)&fn, (char*)get_inode(inum), sizeof(inode));
+	if (mode < 10000) mode = mode | 0100000;		// Regular file
+	else {			// Directory
+		dirent *ptr = (dirent*)pages_get_page(get_inode(inum)->ptrs[0]+5);
+		strcpy(ptr->name, ".");
+		ptr->inum=inum;
+		ptr->next=true;
+		ptr++;
+		strcpy(ptr->name, "..");
+		ptr->inum=dd->inum;
+	}
+	fn.mode=mode;
+	fn.refs=0;
+	fn.ptrs[0]=alloc_page()-5;
+	fn.ptrs[1]=alloc_page()-5;
+	memcpy((char*)get_inode(inum), (char*)&fn, sizeof(inode));
+	
+	directory_put(dd, path, inum);
 
-int
-nufs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
-	if (nufs_mknod(path, mode, 0)) {
-    		int l = tree_lookup(path);
-    		inode *n = get_inode(l);
-        	n->mode = mode; // regular file
-        	n->size = 0;
-        	return l;
-	} else return -1;
-}
-
-bool
-isnum(const char *path)
-{
-	char n[4] = ".num";
-	int l = strlen(path) - strlen(n);
-	int i;
-	for (i=0; i<l; i++);
-	for (int j=0; j<4; j++, i++) if (path[i]!=n[j]) return false;
-	return true;
-}
-
-// implementation for: man 2 stat
-// gets an object's attributes (type, permissions, size, etc)
-int
-nufs_getattr(const char *path, struct stat *st)
-// What I hate about this is how it will now create a file for each one that is tests exists...not very great of average UX
-{
-    int rv = 0;
-    int l = tree_lookup(path);
-    inode *n;
-    if (l>-1) {
-    	if (st) {
-    		n = get_inode(l);
-        	st->st_mode = n->mode; // regular file
-        	st->st_size = n->size;
-        	st->st_uid = getuid();
-        }
-    }
-    else if (!strcmp(path, "/one.txt") || !strcmp(path, "/two.txt") || !strcmp(path, "/2k.txt") || !strcmp(path, "/40k.txt") || isnum(path)) {
-    	l = nufs_create(path, 0100644, 0);
-    	return nufs_getattr(path, st);
-    }
-    else {
-    	rv = -ENOENT;
-    }
-    if (st) printf("getattr(%s) -> (%d) {mode: %04o, size: %ld}\n", path, rv, st->st_mode, st->st_size);
-    else printf("getattr(%s) -> (%d)\n", path, rv);
-    return rv;
-}
-
-// implementation for: man 2 readdir
-// lists the contents of a directory
-int
-nufs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
-             off_t offset, struct fuse_file_info *fi)
-{
-    struct stat st;
-    int rv;
-    
-    size_t* count = (size_t*)get_root_start();
-    dirent *ent = (dirent*)get_root_start()+1;
-    for (int i=0; i<*count; i++) {
-    	rv = nufs_getattr(ent->name, &st);
-    	assert(rv == 0);
-    	if (strcmp(ent->name, "/")==0) filler(buf, ".", &st, 0);
-    	else if (ent->active==true) {
-    		char name[DIR_NAME];
-		int i;
-		for(i=1; i<DIR_NAME && ent->name[i]; i++) name[i-1] = ent->name[i];
-		name[i-1]=0;
-    		filler(buf, name, &st, 0);
-    	}
-	*ent++;
-    }
-
-    printf("readdir(%s) -> %d\n", path, rv);
-    return 0;
+	printf("mknod(%s, %04o) -> %d\n", path, mode, rv);
+	return rv;
 }
 
 // most of the following callbacks implement
@@ -138,95 +170,123 @@ nufs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 int
 nufs_mkdir(const char *path, mode_t mode)
 {
-    int rv = nufs_mknod(path, mode | 040000, 0);
-    // TODO: Nested Directories
-    printf("mkdir(%s) -> %d\n", path, rv);
-    return rv;
+	int rv = nufs_mknod(path, mode | 040000, 0);
+	printf("mkdir(%s) -> %d\n", path, rv);
+	return rv;
 }
 
 int
 nufs_unlink(const char *path)
+/* This function was originally written by DeepSeek.
+ * Finished by myself. */
 {
-    int rv = -1;
-    int l = tree_lookup(path);
-    if (l<0) return -ENOENT;
-    size_t* count = (size_t*)get_root_start();
-    dirent *ent = (dirent*)get_root_start()+1;
-    void* bm = get_inode_bitmap();
-    for (int i=0; i<*count; i++) {
-    	rv = nufs_getattr(ent->name, 0);
-    	assert(rv == 0);
-    	if (!strcmp(ent->name, path)) {
-    		ent->active=false;
-    		bitmap_put(bm, l, 0);
-    		printf("found file!\n");
-    		return rv;
-    	}
-	*ent++;
-    }
-    printf("unlink(%s) -> %d\n", path, rv);
-    return rv;
+	
+	// Look up parent directory
+	int dir_inum = tree_lookup(split(path, count_l(path)-1));
+	if (dir_inum < 0) {
+		return -ENOENT;
+	}
+	
+	inode* dir_node = get_inode(dir_inum);
+	
+	// Look up the file
+	int file_inum = directory_lookup(dir_node, path);
+	if (file_inum < 0) {
+		return -ENOENT;
+	}
+	
+	inode* file_node = get_inode(file_inum);
+	if (file_node == NULL) {
+		return -ENOENT;
+	}
+	
+	// Remove directory entry
+	int rv = directory_delete(dir_node, path);
+	if (rv < 0) {
+		return rv;
+	}
+	
+	// Decrement reference count and free if needed
+	file_node->refs--;
+	if (file_node->refs <= 0) {
+		// Free all data pages
+		for (int i = 0; i < 2; i++) {
+			if (file_node->ptrs[i] != 0) {
+				free_page(file_node->ptrs[i]);
+			}
+		}
+		
+		/*// Free indirect page	<- That's wrong, DeepSeek. This should be a loop which frees all iptr inodes...can implement later...
+		if (file_node->iptr != 0) {
+			free_page(file_node->iptr);
+		}*/
+		
+		// Free inode
+		void* ibm = get_inode_bitmap();
+		bitmap_put(ibm, file_inum, 0);
+	}
+	
+	printf("unlink(%s) -> %d\n", path, rv);
+	return rv;
 }
 
 int
 nufs_link(const char *from, const char *to)
 {
-    int rv = 0;
-    int l = tree_lookup(from);
-    inode *n = get_inode(l);
-    size_t* count = (size_t*)get_root_start();
-    dirent *nod = (dirent*)get_root_start() + 1;
-    for (int i=0; i<*count; i++, *nod++);
-    strcpy(nod->name, to);
-    nod->inum = l;
-    nod->active=true;
-    *count = *count + 1;
-    n->mode = 0100644;
-    printf("link(%s => %s) -> %d\n", from, to, rv);
+	int rv = 0;
+	int l = tree_lookup(from);
+	if ( l == -ENOENT ) rv = -ENOENT;
+	inode *parent = get_inode(tree_lookup(split(to, count_l(to)-1)));
+	
+	directory_put(parent, to, l);
+	printf("link(%s => %s) -> %d\n", from, to, rv);
 	return rv;
 }
 
 int
 nufs_rmdir(const char *path)
 {
-    int rv = -1;
-    rv = nufs_unlink(path);
-    printf("rmdir(%s) -> %d\n", path, rv);
-    return rv;
+	int rv = -1;
+	printf("rmdir(%s) -> %d\n", path, rv);
+	return rv;
 }
 
 // implements: man 2 rename
 // called to move a file within the same filesystem
 int
-nufs_rename(const char *from, const char *to) {
-    int rv = 0;
-    size_t* count = (size_t*)get_root_start();
-    dirent *ent = (dirent*)get_root_start()+1;
-    for (int i=0; i<*count; i++) {
-    	if (strcmp(ent->name, from)==0) {
-    		strcpy(ent->name, to);
-    	}
-	*ent++;
-    }
-    printf("rename(%s => %s) -> %d\n", from, to, rv);
-    return rv;
+nufs_rename(const char *from, const char *to)
+{
+	int rv = -1;
+	int l = tree_lookup(split(from, count_l(from)-1));
+	inode *dd = get_inode(l);
+	
+	directory_delete(dd, from);
+	l = tree_lookup(from);
+	directory_put(dd, to, l);
+	
+	printf("rename(%s => %s) -> %d\n", from, to, rv);
+	return rv;
 }
 
 int
 nufs_chmod(const char *path, mode_t mode)
 {
-    int rv = -1;
-    printf("chmod(%s, %04o) -> %d\n", path, mode, rv);
-    return rv;
+	int rv = -1;
+	int l = tree_lookup(path);
+	inode dd;
+	memcpy((char*)&dd, (char*)get_inode(l), sizeof(inode));
+	dd.mode = mode;
+	memcpy((char*)get_inode(l), (char*)&dd, sizeof(inode));
+	printf("chmod(%s, %04o) -> %d\n", path, mode, rv);
+	return rv;
 }
 
 int
 nufs_truncate(const char *path, off_t size)
 {
-    int rv = 0;
-    //int l = tree_lookup(path
-    printf("truncate(%s, %ld bytes) -> %d\n", path, size, rv);
-    return rv;
+	int rv = -1;
+	printf("truncate(%s, %ld bytes) -> %d\n", path, size, rv);
+	return rv;
 }
 
 // this is called on open, but doesn't need to do much
@@ -235,85 +295,227 @@ nufs_truncate(const char *path, off_t size)
 int
 nufs_open(const char *path, struct fuse_file_info *fi)
 {
-    int rv = 0;
-    int k = nufs_access(path, 0);
-    if (k==-ENOENT) k = nufs_create(path, 0100644, 0);
-    printf("open(%s) -> %d\n", path, rv);
-    return rv;
+	int rv = 0;
+	printf("open(%s) -> %d\n", path, rv);
+	return rv;
 }
 
 // Actually read data
 int
 nufs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+/* This function was written by DeepSeek. */
 {
-    int rv = 4096;
-    int l = tree_lookup(path);
-    inode* n = get_inode(l);
-    void *data = (void*)(uintptr_t)((char*)get_data_start()+n->ptrs[0]+offset);
-    memcpy(buf, data, size);
-    printf("read(%s, %ld bytes, @+%ld) -> %d\n", path, size, offset, rv);
-    return rv;
+	// Find the inode for the given path
+	int inum = tree_lookup(path);
+	if (inum < 0) {
+		return -ENOENT; // File not found
+	}
+	
+	inode* node = get_inode(inum);
+	if (node == NULL) {
+		return -ENOENT;
+	}
+	
+	// Check if offset is beyond file size
+	if (offset >= node->size) {
+		return 0; // Nothing to read
+	}
+	
+	// Adjust size if it would read beyond the end of the file
+	if (offset + size > node->size) {
+		size = node->size - offset;
+	}
+	
+	if (size == 0) {
+		return 0;
+	}
+	
+	int bytes_read = 0;
+	int remaining = size;
+	off_t current_offset = offset;
+	
+	while (remaining > 0) {
+		// Calculate which page we're reading from
+		int page_index = current_offset / 4096;
+		int page_offset = current_offset % 4096;
+		
+		// Get the physical page number for this logical page
+		int pnum = -1;
+		
+		if (page_index < 2) {
+			// Direct pointer
+			pnum = node->ptrs[page_index];
+		} else {
+			// Indirect pointer - need to read from the indirect page
+			if (node->iptr == 0) {
+				break; // No indirect page allocated
+			}
+			
+			// Read the page number from the indirect page
+			int* indirect_page = pages_get_page(node->iptr);
+			int indirect_index = page_index - 2;
+			
+			if (indirect_index >= 1024) {
+				break; // Beyond maximum supported pages
+			}
+			
+			pnum = indirect_page[indirect_index];
+		}
+		
+		if (pnum <= 0) {
+			break; // No page allocated here
+		}
+		
+		// Get pointer to the page data
+		char* page_data = pages_get_page(pnum);
+		
+		// Calculate how much to read from this page
+		int bytes_to_read = 4096 - page_offset;
+		if (bytes_to_read > remaining) {
+			bytes_to_read = remaining;
+		}
+		
+		// Copy data from page to buffer
+		memcpy(buf + bytes_read, page_data + page_offset, bytes_to_read);
+		
+		// Update counters
+		bytes_read += bytes_to_read;
+		remaining -= bytes_to_read;
+		current_offset += bytes_to_read;
+	}
+	
+	printf("read(%s, %ld bytes, @+%ld) -> %d\n", path, size, offset, bytes_read);
+	return bytes_read;
 }
 
 // Actually write data
 int
 nufs_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+/* This function was written by DeepSeek. */
 {
-    int rv = 0;
-    int l = tree_lookup(path);
-    inode* n = get_inode(l);
-    inode* h = get_inode(0);
-    void *b = (void*)(uintptr_t)((char*)get_data_start() + h->ptrs[0]);
-    memcpy(b, buf, size);
-    n->ptrs[0]=h->ptrs[0];
-    n->size=size;
-    h->ptrs[0]+=size;
-    rv = size;
-    printf("write(%s, %ld bytes, @+%ld) -> %d\n", path, size, offset, rv);
-    return rv;
+	// Find the inode for the given path
+	int inum = tree_lookup(path);
+	if (inum < 0) {
+		return -ENOENT; // File not found
+	}
+	
+	inode* node = get_inode(inum);
+	if (node == NULL) {
+		return -ENOENT;
+	}
+	
+	// If writing beyond current size, we need to grow the file
+	if (offset + size > node->size) {
+		int new_size = offset + size;
+		int rv = grow_inode(node, new_size);
+		if (rv < 0) {
+			return -ENOSPC; // No space left
+		}
+	}
+	
+	int bytes_written = 0;
+	int remaining = size;
+	off_t current_offset = offset;
+	
+	while (remaining > 0) {
+		// Calculate which page we're writing to
+		int page_index = current_offset / 4096;
+		int page_offset = current_offset % 4096;
+		
+		// Get the physical page number for this logical page
+		int pnum = -1;
+		
+		if (page_index < 2) {
+			// Direct pointer
+			pnum = node->ptrs[page_index];
+		} else {
+			// Indirect pointer - need to read from the indirect page
+			if (node->iptr == 0) {
+				return -ENOSPC; // No indirect page allocated (should have been allocated by grow_inode)
+			}
+			
+			// Read the page number from the indirect page
+			int* indirect_page = pages_get_page(node->iptr);
+			int indirect_index = page_index - 2;
+			
+			if (indirect_index >= 1024) {
+				return -EFBIG; // File too large
+			}
+			
+			pnum = indirect_page[indirect_index];
+		}
+		
+		if (pnum <= 0) {
+			return -ENOSPC; // Page not allocated (should have been allocated by grow_inode)
+		}
+		
+		// Get pointer to the page data
+		char* page_data = pages_get_page(pnum);
+		
+		// Calculate how much to write to this page
+		int bytes_to_write = 4096 - page_offset;
+		if (bytes_to_write > remaining) {
+			bytes_to_write = remaining;
+		}
+		
+		// Copy data from buffer to page
+		memcpy(page_data + page_offset, buf + bytes_written, bytes_to_write);
+		
+		// Update counters
+		bytes_written += bytes_to_write;
+		remaining -= bytes_to_write;
+		current_offset += bytes_to_write;
+	}
+	
+	// Update file size if we wrote beyond the previous end
+	if (offset + bytes_written > node->size) {
+		node->size = offset + bytes_written;
+	}
+	
+	printf("write(%s, %ld bytes, @+%ld) -> %d\n", path, size, offset, bytes_written);
+	return bytes_written;
 }
 
 // Update the timestamps on a file or directory.
 int
 nufs_utimens(const char* path, const struct timespec ts[2])
 {
-    int rv = -1;
-    printf("utimens(%s, [%ld, %ld; %ld %ld]) -> %d\n",
-           path, ts[0].tv_sec, ts[0].tv_nsec, ts[1].tv_sec, ts[1].tv_nsec, rv);
+	int rv = -1;
+	printf("utimens(%s, [%ld, %ld; %ld %ld]) -> %d\n",
+		   path, ts[0].tv_sec, ts[0].tv_nsec, ts[1].tv_sec, ts[1].tv_nsec, rv);
 	return rv;
 }
 
 // Extended operations
 int
 nufs_ioctl(const char* path, int cmd, void* arg, struct fuse_file_info* fi,
-           unsigned int flags, void* data)
+		   unsigned int flags, void* data)
 {
-    int rv = -1;
-    printf("ioctl(%s, %d, ...) -> %d\n", path, cmd, rv);
-    return rv;
+	int rv = -1;
+	printf("ioctl(%s, %d, ...) -> %d\n", path, cmd, rv);
+	return rv;
 }
 
 void
 nufs_init_ops(struct fuse_operations* ops)
 {
-    memset(ops, 0, sizeof(struct fuse_operations));
-    ops->access   = nufs_access;
-    ops->getattr  = nufs_getattr;
-    ops->readdir  = nufs_readdir;
-    ops->mknod    = nufs_mknod;
-    ops->mkdir    = nufs_mkdir;
-    ops->link     = nufs_link;
-    ops->unlink   = nufs_unlink;
-    ops->rmdir    = nufs_rmdir;
-    ops->rename   = nufs_rename;
-    ops->chmod    = nufs_chmod;
-    ops->truncate = nufs_truncate;
-    ops->open	  = nufs_open;
-    ops->create	  = nufs_create;
-    ops->read     = nufs_read;
-    ops->write    = nufs_write;
-    ops->utimens  = nufs_utimens;
-    ops->ioctl    = nufs_ioctl;
+	memset(ops, 0, sizeof(struct fuse_operations));
+	ops->access   = nufs_access;
+	ops->getattr  = nufs_getattr;
+	ops->readdir  = nufs_readdir;
+	ops->mknod	= nufs_mknod;
+	ops->mkdir	= nufs_mkdir;
+	ops->link	 = nufs_link;
+	ops->unlink   = nufs_unlink;
+	ops->rmdir	= nufs_rmdir;
+	ops->rename   = nufs_rename;
+	ops->chmod	= nufs_chmod;
+	ops->truncate = nufs_truncate;
+	ops->open	  = nufs_open;
+	ops->read	 = nufs_read;
+	ops->write	= nufs_write;
+	ops->utimens  = nufs_utimens;
+	ops->ioctl	= nufs_ioctl;
 };
 
 struct fuse_operations nufs_ops;
@@ -321,10 +523,9 @@ struct fuse_operations nufs_ops;
 int
 main(int argc, char *argv[])
 {
-    assert(argc > 2 && argc < 6);
-    //if (access(argv[argc], F_OK) != 0) mkfs();
-    storage_init(argv[--argc]);
-    nufs_init_ops(&nufs_ops);
-    return fuse_main(argc, argv, &nufs_ops, NULL);
+	assert(argc > 2 && argc < 7);
+	storage_init(argv[--argc]);
+	nufs_init_ops(&nufs_ops);
+	return fuse_main(argc, argv, &nufs_ops, NULL);
 }
 

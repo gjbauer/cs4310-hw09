@@ -16,7 +16,8 @@
 #include "pages.h"
 #include "util.h"
 #include "bitmap.h"
-#include "nufs.h"
+#include "libmkfs.h"
+#include "inode.h"
 
 const int PAGE_COUNT = 512;
 const int NUFS_SIZE  = 4096 * 512; // 2MB
@@ -37,7 +38,19 @@ pages_init(const char* path)
     assert(pages_base != MAP_FAILED);
 
     void* pbm = get_pages_bitmap();
-    for (int i=0; i<=9; i++) alloc_page();
+    for (int i=0; i<5; i++) alloc_page();
+    void* ibm = get_inode_bitmap();
+    for (int i=0; i<=512; i++) bitmap_put(ibm, i, 0);
+    inode ins;
+    void* in = get_inode_start();
+    for (int i=0; i<=512; i++) {
+    	ins.inum=i;
+    	ins.size=0;
+	ins.ptrs[0]=0, ins.ptrs[1]=0;
+	ins.refs==0;
+    	memcpy((char*)get_inode(i), (char*)&ins, sizeof(ins));
+    }
+    
 }
 
 void
@@ -88,12 +101,6 @@ void*
 get_root_start()
 {
     return pages_get_page(5);
-}
-
-void*
-get_data_start()
-{
-    return pages_get_page(8);
 }
 
 int
